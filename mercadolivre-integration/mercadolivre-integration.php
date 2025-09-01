@@ -12,7 +12,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('MERCADOLIVRE_PLUGIN_URL', plugin_dir_url(__FILE__));
+define('MERCADOLIVRE_PLUGIN_URL', plugins_url('/', __FILE__));
 define('MERCADOLIVRE_PLUGIN_PATH', plugin_dir_path(__FILE__));
 
 class MercadoLivreIntegration {
@@ -36,10 +36,14 @@ class MercadoLivreIntegration {
             add_action('wp_ajax_ml_sync_products', array($this, 'sync_products'));
             // add_category function was removed - using ajax_add_product_category
             add_action('wp_ajax_ml_get_products', array($this, 'ajax_get_products'));
+            add_action('wp_ajax_nopriv_ml_get_products', array($this, 'ajax_get_products'));
             add_action('wp_ajax_ml_get_product_categories', array($this, 'ajax_get_product_categories'));
             add_action('wp_ajax_ml_add_product_category', array($this, 'ajax_add_product_category'));
             add_action('wp_ajax_ml_remove_product_category', array($this, 'ajax_remove_product_category'));
             add_action('wp_ajax_ml_get_categories', array($this, 'ajax_get_categories'));
+            add_action('wp_ajax_nopriv_ml_get_categories', array($this, 'ajax_get_categories'));
+            add_action('wp_ajax_ml_get_product_details', array($this, 'ajax_get_product_details'));
+            add_action('wp_ajax_nopriv_ml_get_product_details', array($this, 'ajax_get_product_details'));
             add_action('wp_ajax_ml_disconnect', array($this, 'handle_disconnect'));
             add_shortcode('ml_products', array($this, 'products_shortcode'));
             add_action('wp_enqueue_scripts', array($this, 'enqueue_scripts'));
@@ -764,94 +768,109 @@ class MercadoLivreIntegration {
     // Function removed - using ajax_add_product_category instead
     
     public function ajax_get_products() {
-        if (!is_user_logged_in()) {
-            wp_send_json_error('Unauthorized');
-        }
-        
         global $wpdb;
-        $user_id = get_current_user_id();
-        
-        // Get parameters (PHP 7.0 compatible)
+
+        // Parâmetros da requisição
         $page = max(1, intval(isset($_POST['page']) ? $_POST['page'] : 1));
-        $per_page = max(5, min(50, intval(isset($_POST['per_page']) ? $_POST['per_page'] : 20)));
-        $search_name = sanitize_text_field(isset($_POST['search_name']) ? $_POST['search_name'] : '');
-        $search_description = sanitize_text_field(isset($_POST['search_description']) ? $_POST['search_description'] : '');
+        $per_page = max(5, min(100, intval(isset($_POST['per_page']) ? $_POST['per_page'] : 20)));
         $category = sanitize_text_field(isset($_POST['category']) ? $_POST['category'] : '');
-        
+        // Novo parâmetro para controlar o filtro de categoria
+        $require_category = isset($_POST['require_category']) ? rest_sanitize_boolean($_POST['require_category']) : false;
+
         $offset = ($page - 1) * $per_page;
-        
-        // Build query - Only show products that have categories (category-based visibility)
+
+        // Tabelas do banco
         $products_table = $wpdb->prefix . 'ml_products';
-        $categories_table = $wpdb->prefix . 'ml_categories';
         $product_categories_table = $wpdb->prefix . 'ml_product_categories';
+        $categories_table = $wpdb->prefix . 'ml_categories';
+
+        // Montagem da Query
+        $join_type = $require_category ? 'INNER JOIN' : 'LEFT JOIN';
+        $base_query = "FROM $products_table p $join_type $product_categories_table pc ON p.ml_id = pc.ml_product_id";
         
         $where_conditions = array();
-        $join_clauses = array();
-        
-        // Base query - only include products with categories
-        $query = "SELECT DISTINCT p.*
-                  FROM $products_table p 
-                  INNER JOIN $product_categories_table pc ON p.ml_id = pc.ml_product_id";
         $query_params = array();
-        
-        // Filters
-        if ($search_name) {
-            $where_conditions[] = "p.title LIKE %s";
-            $query_params[] = '%' . $wpdb->esc_like($search_name) . '%';
-        }
-        
-        if ($search_description) {
-            $where_conditions[] = "p.title LIKE %s"; // Using title as description for now
-            $query_params[] = '%' . $wpdb->esc_like($search_description) . '%';
-        }
-        
+
         if ($category) {
             $where_conditions[] = "pc.category_id = %d";
             $query_params[] = intval($category);
+        } else if ($require_category) {
+            // Se requer categoria mas nenhuma específica foi passada, garante que a associação exista.
+            $where_conditions[] = "pc.category_id IS NOT NULL";
         }
-        
-        // Add joins
-        $query .= ' ' . implode(' ', $join_clauses);
-        
-        // Add where conditions
+
+        $where_clause = '';
         if (!empty($where_conditions)) {
-            $query .= ' WHERE ' . implode(' AND ', $where_conditions);
+            $where_clause = ' WHERE ' . implode(' AND ', $where_conditions);
         }
-        
-        // Count total
-        $count_query = str_replace('SELECT DISTINCT p.*', 'SELECT COUNT(DISTINCT p.id)', $query);
+
+        // Query para contagem total de produtos
+        $count_query = "SELECT COUNT(DISTINCT p.id) $base_query $where_clause";
         $total = $wpdb->get_var($wpdb->prepare($count_query, $query_params));
-        
-        // Add ordering and limit
-        $query .= " ORDER BY p.created_at DESC LIMIT %d OFFSET %d";
-        $query_params[] = $per_page;
-        $query_params[] = $offset;
-        
-        // Get products
-        $products = $wpdb->get_results($wpdb->prepare($query, $query_params));
-        
-        // Get categories for each product
+
+        // Query para buscar os produtos
+        $product_query = "SELECT DISTINCT p.* $base_query $where_clause ORDER BY p.created_at DESC LIMIT %d OFFSET %d";
+        array_push($query_params, $per_page, $offset);
+        $products = $wpdb->get_results($wpdb->prepare($product_query, $query_params));
+
+        // Buscar categorias para cada produto
         foreach ($products as &$product) {
-            $categories = $wpdb->get_results($wpdb->prepare(
-                "SELECT c.* FROM $categories_table c 
-                 INNER JOIN $product_categories_table pc ON c.id = pc.category_id 
-                 WHERE pc.ml_product_id = %s",
+            $product->description = $product->title; // Usar o título como descrição base
+            $product_cats = $wpdb->get_results($wpdb->prepare(
+                "SELECT c.* FROM $categories_table c JOIN $product_categories_table pc ON c.id = pc.category_id WHERE pc.ml_product_id = %s",
                 $product->ml_id
             ));
-            $product->categories = $categories;
+            $product->categories = $product_cats;
         }
-        
-        $total_pages = ceil($total / $per_page);
-        
+
         wp_send_json_success(array(
             'products' => $products,
             'pagination' => array(
                 'current_page' => $page,
                 'per_page' => $per_page,
                 'total' => intval($total),
-                'total_pages' => $total_pages
+                'total_pages' => ceil($total / $per_page)
             )
         ));
+    }
+
+    public function ajax_get_product_details() {
+        $product_id = isset($_POST['product_id']) ? intval($_POST['product_id']) : 0;
+
+        if (empty($product_id)) {
+            wp_send_json_error('Product ID is required.');
+        }
+
+        global $wpdb;
+        $products_table = $wpdb->prefix . 'ml_products';
+        $images_table = $wpdb->prefix . 'ml_product_images';
+        $categories_table = $wpdb->prefix . 'ml_categories';
+        $product_categories_table = $wpdb->prefix . 'ml_product_categories';
+
+        // Get main product data
+        $product = $wpdb->get_row($wpdb->prepare("SELECT * FROM $products_table WHERE id = %d", $product_id));
+
+        if (!$product) {
+            wp_send_json_error('Product not found.');
+        }
+
+        // Get all images
+        $images = $wpdb->get_results($wpdb->prepare("SELECT url FROM $images_table WHERE product_id = %d", $product_id));
+        $product->images = $images;
+
+        // Get all categories
+        $categories = $wpdb->get_results($wpdb->prepare(
+            "SELECT c.name FROM $categories_table c 
+             INNER JOIN $product_categories_table pc ON c.id = pc.category_id 
+             WHERE pc.ml_product_id = %s",
+            $product->ml_id
+        ));
+        $product->categories = $categories;
+        
+        // A description field could be added to the database later.
+        $product->description = $product->title;
+
+        wp_send_json_success($product);
     }
     
     public function ajax_get_product_categories() {
@@ -988,10 +1007,6 @@ class MercadoLivreIntegration {
     }
     
     public function ajax_get_categories() {
-        if (!is_user_logged_in()) {
-            wp_send_json_error('Unauthorized');
-        }
-        
         global $wpdb;
         $categories_table = $wpdb->prefix . 'ml_categories';
         
@@ -1033,15 +1048,15 @@ class MercadoLivreIntegration {
         }
         
         // Enqueue styles e scripts apenas se existirem
-        $js_path = plugin_dir_path(__FILE__) . 'assets/products-manager.js';
-        $css_path = plugin_dir_path(__FILE__) . 'assets/products-manager.css';
+        $js_path = MERCADOLIVRE_PLUGIN_PATH . 'assets/products-manager.js';
+        $css_path = MERCADOLIVRE_PLUGIN_PATH . 'assets/products-manager.css';
         
         if (file_exists($js_path)) {
-            wp_enqueue_script('ml-products-manager', plugin_dir_url(__FILE__) . 'assets/products-manager.js', array('jquery'), '1.0.0', true);
+            wp_enqueue_script('ml-products-manager', MERCADOLIVRE_PLUGIN_URL . 'assets/products-manager.js', array('jquery'), '1.0.0', true);
         }
         
         if (file_exists($css_path)) {
-            wp_enqueue_style('ml-products-manager', plugin_dir_url(__FILE__) . 'assets/products-manager.css', array(), '1.0.0');
+            wp_enqueue_style('ml-products-manager', MERCADOLIVRE_PLUGIN_URL . 'assets/products-manager.css', array(), '1.0.0');
         }
         
         // Localizar script apenas se foi carregado
@@ -1276,9 +1291,19 @@ class MercadoLivreIntegration {
     }
     
     public function enqueue_scripts() {
-        // Verificar se os assets existem antes de carregar
-        $js_path = plugin_dir_path(__FILE__) . 'assets/frontend.js';
-        $css_path = plugin_dir_path(__FILE__) . 'assets/frontend.css';
+        $plugin_url = plugins_url('/', __FILE__);
+
+        // Registrar assets do widget de Categoria de Produtos
+        wp_register_style('ml-categoria-produtos-style', $plugin_url . 'assets/categoria-produtos.css', [], '1.0.3');
+        wp_register_script('ml-categoria-produtos-script', $plugin_url . 'assets/categoria-produtos.js', ['jquery'], '1.0.3', true);
+
+        // Registrar assets do widget de Gerenciador de Produtos
+        wp_register_style('ml-products-manager-style', $plugin_url . 'assets/products-manager.css', [], '1.0.1');
+        wp_register_script('ml-products-manager-script', $plugin_url . 'assets/products-manager.js', ['jquery'], '1.0.1', true);
+
+        // Assets do shortcode (se houver)
+        $js_path = MERCADOLIVRE_PLUGIN_PATH . 'assets/frontend.js';
+        $css_path = MERCADOLIVRE_PLUGIN_PATH . 'assets/frontend.css';
         
         if (file_exists($js_path)) {
             wp_enqueue_script('ml-frontend', MERCADOLIVRE_PLUGIN_URL . 'assets/frontend.js', array('jquery'), '1.0.0', true);
@@ -1288,7 +1313,6 @@ class MercadoLivreIntegration {
             wp_enqueue_style('ml-frontend', MERCADOLIVRE_PLUGIN_URL . 'assets/frontend.css', array(), '1.0.0');
         }
         
-        // Localizar script apenas se foi carregado
         if (file_exists($js_path)) {
             wp_localize_script('ml-frontend', 'ml_ajax', array(
                 'ajax_url' => admin_url('admin-ajax.php'),
@@ -1298,21 +1322,35 @@ class MercadoLivreIntegration {
     }
     
     public function admin_enqueue_scripts() {
-        $css_path = plugin_dir_path(__FILE__) . 'assets/admin.css';
+        $css_path = MERCADOLIVRE_PLUGIN_PATH . 'assets/admin.css';
         if (file_exists($css_path)) {
             wp_enqueue_style('ml-admin', MERCADOLIVRE_PLUGIN_URL . 'assets/admin.css', array(), '1.0.0');
         }
     }
 }
 
+add_action('elementor/elements/categories_registered', function($elements_manager) {
+    $elements_manager->add_category(
+        'mercadolivre',
+        [
+            'title' => 'Mercado Livre',
+            'icon' => 'fa fa-plug',
+        ]
+    );
+});
+
 // Load Elementor widget only if Elementor is active and after init
 function ml_load_elementor_widget() {
-    try {
-        if (did_action('elementor/loaded') && class_exists('\Elementor\Widget_Base')) {
-            require_once plugin_dir_path(__FILE__) . 'elementor-widget.php';
+    $plugin_path = MERCADOLIVRE_PLUGIN_PATH;
+    $widget_files = [
+        $plugin_path . 'elementor-widget.php',
+        $plugin_path . 'elementor-categoria-widget.php'
+    ];
+
+    foreach ($widget_files as $file) {
+        if (file_exists($file)) {
+            require_once $file;
         }
-    } catch (Exception $e) {
-        error_log('Mercado Livre Elementor Widget Error: ' . $e->getMessage());
     }
 }
 add_action('init', 'ml_load_elementor_widget', 20);

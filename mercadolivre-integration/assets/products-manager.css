@@ -143,6 +143,27 @@
     font-size: 18px;
 }
 
+.ml-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 15px;
+    align-items: center;
+}
+
+.ml-filter-group-main {
+    display: flex;
+    flex-grow: 1;
+    gap: 4px;
+}
+
+.ml-filter-group-main input {
+    flex: 8;
+}
+
+.ml-filter-group-main select {
+    flex: 3;
+}
+
 .ml-filter-row {
     display: flex;
     gap: 20px;
@@ -235,7 +256,7 @@
 }
 
 .ml-table td {
-    padding: 12px;
+    padding: 12px 4px;
     border-bottom: 1px solid #e9ecef;
     vertical-align: middle;
 }
