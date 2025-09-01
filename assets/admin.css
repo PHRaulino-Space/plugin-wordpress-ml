@@ -1,0 +1,16 @@
+.wrap h1 {
+    margin-bottom: 20px;
+}
+
+.form-table th {
+    font-weight: 600;
+}
+
+.form-table input[type="text"],
+.form-table input[type="url"] {
+    width: 400px;
+}
+
+.notice {
+    margin: 15px 0;
+}

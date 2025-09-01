@@ -1,0 +1,91 @@
+#ml-products-container {
+    margin: 20px 0;
+}
+
+#ml-products-container h2 {
+    margin-bottom: 15px;
+}
+
+#ml-messages {
+    margin: 10px 0;
+}
+
+#ml-messages .notice {
+    padding: 12px;
+    margin: 5px 0 15px 0;
+    border-left: 4px solid #00a0d2;
+    background: #fff;
+}
+
+#ml-messages .notice-success {
+    border-left-color: #46b450;
+}
+
+#ml-messages .notice-error {
+    border-left-color: #dc3232;
+}
+
+.ml-category-tag {
+    display: inline-block;
+    background: #f0f0f1;
+    padding: 3px 8px;
+    margin: 2px;
+    border-radius: 3px;
+    font-size: 12px;
+    color: #50575e;
+}
+
+#ml-category-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.5);
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.ml-modal-content {
+    background: white;
+    padding: 20px;
+    border-radius: 5px;
+    min-width: 300px;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+}
+
+.ml-modal-content h3 {
+    margin-top: 0;
+    margin-bottom: 15px;
+}
+
+.ml-modal-content input {
+    width: 100%;
+    margin-bottom: 15px;
+    padding: 8px;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+}
+
+.ml-modal-content button {
+    margin-right: 10px;
+}
+
+.wp-list-table img {
+    border-radius: 3px;
+    object-fit: cover;
+}
+
+.ml-visibility-toggle {
+    transform: scale(1.2);
+}
+
+.ml-add-category-btn {
+    margin-right: 5px;
+    font-size: 12px;
+    padding: 4px 8px;
+    height: auto;
+    line-height: 1.4;
+}
